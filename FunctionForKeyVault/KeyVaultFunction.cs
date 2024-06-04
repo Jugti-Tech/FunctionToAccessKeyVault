@@ -4,6 +4,7 @@ using Microsoft.Azure.Functions.Worker;
 using Microsoft.Azure.Functions.Worker.Http;
 using Microsoft.Extensions.Logging;
 using System.Net;
+using System.Web;
 
 namespace FunctionForKeyVault
 {
@@ -21,46 +22,56 @@ namespace FunctionForKeyVault
         {
             _logger.LogInformation("C# HTTP trigger function processed a request.");
             string kvUri = "https://jugtikeyvault.vault.azure.net";
-            var client = new SecretClient(new Uri(kvUri), new DefaultAzureCredential());
+            SecretClient client = new SecretClient(new Uri(kvUri), new DefaultAzureCredential());
 
-            try
+            // retrieve the secret names from the query string
+
+            string query = req.Url.Query;
+            var queryItems = HttpUtility.ParseQueryString(query);
+            string secretNamesItems = queryItems["SecretNames"] ?? string.Empty;
+            string[] secretNames = secretNamesItems.Split(new[] { ',' }, StringSplitOptions.RemoveEmptyEntries);
+            if (secretNames.Length == 0)
             {
-                KeyVaultSecret secret = await client.GetSecretAsync("dev-townmilk-milkman-mongoDBAppId");
-
-                if (secret?.Value != null)
+                return await CreateErrorResponse(req, "Error retrieving secret: No secret names provided.");
+            }
+            var secrets = new Dictionary<string, string>();
+            foreach (string secretName in secretNames)
+            {
+                try
                 {
-                    _logger.LogInformation($"Successfully retrieved secret: {secret.Value}");
-                    var response = req.CreateResponse(HttpStatusCode.OK);
-                    response.Headers.Add("Content-Type", "text/plain; charset=utf-utf-8");
-
-                    // Optionally, output the secret value; be careful with sensitive information
-                    // response.WriteString($"Secret value: {secret.Value}");
-
-                    await response.WriteStringAsync("Secret retrieved successfully.");
-                    return response;
+                    KeyVaultSecret secret = await client.GetSecretAsync(secretName);
+                    if (secret?.Value != null)
+                    {
+                        _logger.LogInformation($"Successfully retrieved secret: {secret.Value}");
+                        secrets.Add(secretName, secret.Value);
+                    }
+                    else
+                    {
+                        _logger.LogError($"Secret {secretName} is null or empty.");
+                        secrets.Add(secretName, "null or empty");
+                    }
                 }
-
-                else
+                catch (Exception ex)
                 {
-                    _logger.LogError("Secret is null or empty.");
-                    return CreateErrorResponse(req, "Error retrieving secret: Secret is null or empty.");
+                    _logger.LogError($"Exception occurred: {secretName}:{ex.Message}");
+                    return await CreateErrorResponse(req, $"Error retrieving secret: {ex.Message}");
                 }
             }
-            catch (Exception ex)
-            {
-                _logger.LogError($"Exception occurred: {ex.Message}");
-                return CreateErrorResponse(req, $"Error retrieving secret: {ex.Message}");
-            }
+            var response = req.CreateResponse(HttpStatusCode.OK);
+            response.Headers.Add("Content-Type", "application/json; charset=utf-8");
+            await response.WriteAsJsonAsync(secrets);
+            return response;
+
         }
 
 
-        private static HttpResponseData CreateErrorResponse(HttpRequestData req, string message)
+        private static async Task<HttpResponseData> CreateErrorResponse(HttpRequestData req, string message)
         {
             var response = req.CreateResponse(HttpStatusCode.InternalServerError);
 
             response.Headers.Add("Content-Type", "text/plain; charset=utf-8");
 
-            response.WriteStringAsync(message);
+            await response.WriteStringAsync(message);
 
             return response;
         }
