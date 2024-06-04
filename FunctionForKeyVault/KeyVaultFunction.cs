@@ -59,7 +59,7 @@ namespace FunctionForKeyVault
             }
             var response = req.CreateResponse(HttpStatusCode.OK);
             response.Headers.Add("Content-Type", "application/json; charset=utf-8");
-            await response.WriteAsJsonAsync(secrets);
+            await response.WriteStringAsync(System.Text.Json.JsonSerializer.Serialize(secrets));
             return response;
 
         }
